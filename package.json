@@ -1,7 +1,8 @@
 {
   "name": "opencode-conductor",
-  "version": "1.0.6",
+  "version": "2.0.0",
   "description": "OpenCode plugin for Context-Driven Development workflow",
+  "type": "module",
   "main": "plugin/conductor.ts",
   "repository": {
     "type": "git",
@@ -23,6 +24,6 @@
     "@types/node": "^20.0.0"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "*"
+    "@opencode/plugin": "^2.2.5"
   }
 }

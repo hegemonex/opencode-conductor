@@ -1,147 +1,241 @@
-import { tool } from "@opencode-ai/plugin/tool";
-import type { Plugin } from "@opencode-ai/plugin";
-import * as fs from "fs";
-import * as path from "path";
+import { Plugin } from "@opencode/plugin";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
-const CONDUCTOR_DIR = "conductor";
-const TRACKS_DIR = path.join(CONDUCTOR_DIR, "tracks");
+/**
+ * OpenCode Conductor — Context-Driven Development workflow.
+ *
+ * V2 plugin entrypoint. Registers a set of tools that manage a project-local
+ * `conductor/` directory (context files and development tracks).
+ */
+export default Plugin.define({
+  id: "opencode-conductor",
 
-export const ConductorPlugin: Plugin = async ({ project, client, $, directory, worktree }) => {
-  /**
-   * conductor_init - Scaffold conductor/ directory with context files
-   */
-  const conductor_init = tool({
-    description: "Initialize project with Conductor context files",
-    args: {
-      product: tool.schema.string().optional().describe("Initial product mission/context"),
-      techStack: tool.schema.string().optional().describe("Initial tech stack details"),
-      workflow: tool.schema.string().optional().describe("Initial workflow standards"),
-    },
-    execute: async ({ product, techStack, workflow }) => {
-      if (!fs.existsSync(CONDUCTOR_DIR)) fs.mkdirSync(CONDUCTOR_DIR);
-      if (!fs.existsSync(TRACKS_DIR)) fs.mkdirSync(TRACKS_DIR);
+  async setup(ctx) {
+    // Directory where this plugin instance loaded (the project root for a
+    // project-level config). All conductor paths are resolved relative to it.
+    const baseDir = ctx.location.directory;
+    const conductorDir = path.join(baseDir, "conductor");
+    const tracksDir = path.join(conductorDir, "tracks");
 
-      const files = {
-        "product.md": product ? `# Product Context\n${product}` : "# Product Context\nDescribe the product mission and value proposition.",
-        "tech-stack.md": techStack ? `# Tech Stack\n${techStack}` : "# Tech Stack\nList the technologies, frameworks, and tools used.",
-        "workflow.md": workflow ? `# Workflow\n${workflow}` : "# Workflow\nDescribe development processes and standards.",
-        "tracks.md": "# Tracks Index\nList of all development tracks.",
-      };
+    // Tool transforms are replayable state edits: keep the callback
+    // synchronous and free of one-time side effects.
+    await ctx.tool.transform((editor) => {
+      // conductor_init - Scaffold conductor/ directory with context files
+      editor.add({
+        name: "conductor_init",
+        description: "Initialize project with Conductor context files",
+        input: {
+          type: "object",
+          properties: {
+            product: {
+              type: "string",
+              description: "Initial product mission/context",
+            },
+            techStack: {
+              type: "string",
+              description: "Initial tech stack details",
+            },
+            workflow: {
+              type: "string",
+              description: "Initial workflow standards",
+            },
+          },
+          additionalProperties: false,
+        },
+        async execute(input) {
+          const { product, techStack, workflow } = input as Record<
+            string,
+            string | undefined
+          >;
 
-      for (const [name, content] of Object.entries(files)) {
-        const filePath = path.join(CONDUCTOR_DIR, name);
-        if (!fs.existsSync(filePath)) {
-          fs.writeFileSync(filePath, content);
-        }
-      }
-      return "Conductor initialized successfully.";
-    }
-  });
+          if (!fs.existsSync(conductorDir)) {
+            fs.mkdirSync(conductorDir, { recursive: true });
+          }
+          if (!fs.existsSync(tracksDir)) {
+            fs.mkdirSync(tracksDir, { recursive: true });
+          }
 
-  /**
-   * conductor_create_track - Create new track with spec.md, plan.md, metadata.json
-   */
-  const conductor_create_track = tool({
-    description: "Create a new development track",
-    args: {
-      id: tool.schema.string().describe("Unique ID for the track (e.g., feat-login)"),
-      title: tool.schema.string().describe("Title of the track"),
-    },
-    execute: async ({ id, title }) => {
-      const trackPath = path.join(TRACKS_DIR, id);
-      if (fs.existsSync(trackPath)) throw new Error(`Track ${id} already exists.`);
+          const files: Array<[string, string]> = [
+            [
+              "product.md",
+              product
+                ? `# Product Context\n${product}`
+                : "# Product Context\nDescribe the product mission and value proposition.",
+            ],
+            [
+              "tech-stack.md",
+              techStack
+                ? `# Tech Stack\n${techStack}`
+                : "# Tech Stack\nList the technologies, frameworks, and tools used.",
+            ],
+            [
+              "workflow.md",
+              workflow
+                ? `# Workflow\n${workflow}`
+                : "# Workflow\nDescribe development processes and standards.",
+            ],
+            ["tracks.md", "# Tracks Index\nList of all development tracks."],
+          ];
 
-      fs.mkdirSync(trackPath);
+          for (const [name, content] of files) {
+            const filePath = path.join(conductorDir, name);
+            if (!fs.existsSync(filePath)) {
+              fs.writeFileSync(filePath, content);
+            }
+          }
 
-      const specContent = `# Spec: ${title}\n## Goals\n## Requirements`;
-      const planContent = `# Plan: ${title}\n## Tasks\n- [ ] Task 1`;
-      const metadata = {
-        id,
-        title,
-        status: "pending",
-        created_at: new Date().toISOString(),
-      };
+          return { content: "Conductor initialized successfully." };
+        },
+      });
 
-      fs.writeFileSync(path.join(trackPath, "spec.md"), specContent);
-      fs.writeFileSync(path.join(trackPath, "plan.md"), planContent);
-      fs.writeFileSync(path.join(trackPath, "metadata.json"), JSON.stringify(metadata, null, 2));
+      // conductor_create_track - Create a new track (spec, plan, metadata)
+      editor.add({
+        name: "conductor_create_track",
+        description: "Create a new development track",
+        input: {
+          type: "object",
+          properties: {
+            id: {
+              type: "string",
+              description: "Unique ID for the track (e.g., feat-login)",
+            },
+            title: { type: "string", description: "Title of the track" },
+          },
+          required: ["id", "title"],
+          additionalProperties: false,
+        },
+        async execute(input) {
+          const { id, title } = input as { id: string; title: string };
+          const trackPath = path.join(tracksDir, id);
 
-      // Update tracks.md
-      const tracksFile = path.join(CONDUCTOR_DIR, "tracks.md");
-      if (!fs.existsSync(tracksFile)) {
-        fs.writeFileSync(tracksFile, "# Tracks Index\nList of all development tracks.");
-      }
-      const tracksContent = fs.readFileSync(tracksFile, "utf-8");
-      fs.writeFileSync(tracksFile, `${tracksContent}\n- [ ] ${id}: ${title}`);
+          if (fs.existsSync(trackPath)) {
+            throw new Error(`Track ${id} already exists.`);
+          }
 
-      return `Track ${id} created at ${trackPath}`;
-    }
-  });
+          fs.mkdirSync(trackPath, { recursive: true });
+          fs.writeFileSync(
+            path.join(trackPath, "spec.md"),
+            `# Spec: ${title}\n## Goals\n## Requirements`,
+          );
+          fs.writeFileSync(
+            path.join(trackPath, "plan.md"),
+            `# Plan: ${title}\n## Tasks\n- [ ] Task 1`,
+          );
+          fs.writeFileSync(
+            path.join(trackPath, "metadata.json"),
+            JSON.stringify(
+              {
+                id,
+                title,
+                status: "pending",
+                created_at: new Date().toISOString(),
+              },
+              null,
+              2,
+            ),
+          );
 
-  /**
-   * conductor_get_context - Read all context files
-   */
-  const conductor_get_context = tool({
-    description: "Read all Conductor context files",
-    args: {},
-    execute: async () => {
-      const files = ["product.md", "tech-stack.md", "workflow.md", "tracks.md"];
-      let context = "";
-      for (const file of files) {
-        const filePath = path.join(CONDUCTOR_DIR, file);
-        if (fs.existsSync(filePath)) {
-          context += `\n--- ${file} ---\n${fs.readFileSync(filePath, "utf-8")}\n`;
-        }
-      }
-      return context;
-    }
-  });
+          const tracksFile = path.join(conductorDir, "tracks.md");
+          if (!fs.existsSync(tracksFile)) {
+            fs.writeFileSync(
+              tracksFile,
+              "# Tracks Index\nList of all development tracks.",
+            );
+          }
+          const tracksContent = fs.readFileSync(tracksFile, "utf8");
+          fs.writeFileSync(tracksFile, `${tracksContent}\n- [ ] ${id}: ${title}`);
 
-  /**
-   * conductor_read_plan - Get current track's plan and status
-   */
-  const conductor_read_plan = tool({
-    description: "Read the plan for a specific track",
-    args: { id: tool.schema.string().describe("Track ID") },
-    execute: async ({ id }) => {
-      const planPath = path.join(TRACKS_DIR, id, "plan.md");
-      if (!fs.existsSync(planPath)) throw new Error(`Plan for track ${id} not found.`);
-      return fs.readFileSync(planPath, "utf-8");
-    }
-  });
+          return { content: `Track ${id} created at ${trackPath}` };
+        },
+      });
 
-  /**
-   * conductor_update_task - Update task completion markers
-   */
-  const conductor_update_task = tool({
-    description: "Mark a task as completed in a track's plan",
-    args: {
-      id: tool.schema.string().describe("Track ID"),
-      taskName: tool.schema.string().describe("The exact text of the task to mark as complete"),
-    },
-    execute: async ({ id, taskName }) => {
-      const planPath = path.join(TRACKS_DIR, id, "plan.md");
-      if (!fs.existsSync(planPath)) throw new Error(`Plan for track ${id} not found.`);
+      // conductor_get_context - Read all context files
+      editor.add({
+        name: "conductor_get_context",
+        description: "Read all Conductor context files",
+        input: { type: "object", properties: {}, additionalProperties: false },
+        async execute() {
+          let context = "";
+          for (const file of [
+            "product.md",
+            "tech-stack.md",
+            "workflow.md",
+            "tracks.md",
+          ]) {
+            const filePath = path.join(conductorDir, file);
+            if (fs.existsSync(filePath)) {
+              context += `\n--- ${file} ---\n${fs.readFileSync(filePath, "utf8")}\n`;
+            }
+          }
+          return {
+            content:
+              context || "Conductor context not found yet. Run /conductor-setup.",
+          };
+        },
+      });
 
-      let content = fs.readFileSync(planPath, "utf-8");
-      const updatedContent = content.replace(new RegExp(`- \\[ \\] ${taskName}`, "g"), `- [x] ${taskName}`);
+      // conductor_read_plan - Get a track's plan
+      editor.add({
+        name: "conductor_read_plan",
+        description: "Read the plan for a specific track",
+        input: {
+          type: "object",
+          properties: { id: { type: "string", description: "Track ID" } },
+          required: ["id"],
+          additionalProperties: false,
+        },
+        async execute(input) {
+          const { id } = input as { id: string };
+          const planPath = path.join(tracksDir, id, "plan.md");
+          if (!fs.existsSync(planPath)) {
+            throw new Error(`Plan for track ${id} not found.`);
+          }
+          return { content: fs.readFileSync(planPath, "utf8") };
+        },
+      });
 
-      if (content === updatedContent) {
-        return `Task "${taskName}" not found or already completed.`;
-      }
+      // conductor_update_task - Mark a task complete
+      editor.add({
+        name: "conductor_update_task",
+        description: "Mark a task as completed in a track's plan",
+        input: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Track ID" },
+            taskName: {
+              type: "string",
+              description: "The exact text of the task to mark as complete",
+            },
+          },
+          required: ["id", "taskName"],
+          additionalProperties: false,
+        },
+        async execute(input) {
+          const { id, taskName } = input as { id: string; taskName: string };
+          const planPath = path.join(tracksDir, id, "plan.md");
+          if (!fs.existsSync(planPath)) {
+            throw new Error(`Plan for track ${id} not found.`);
+          }
 
-      fs.writeFileSync(planPath, updatedContent);
-      return `Task "${taskName}" marked as completed in track ${id}.`;
-    }
-  });
+          const content = fs.readFileSync(planPath, "utf8");
+          const updatedContent = content.replace(
+            new RegExp(`- \\[ \\] ${taskName}`, "g"),
+            `- [x] ${taskName}`,
+          );
 
-  return {
-    tool: {
-      conductor_init,
-      conductor_create_track,
-      conductor_get_context,
-      conductor_read_plan,
-      conductor_update_task,
-    },
-  };
-};
+          if (content === updatedContent) {
+            return {
+              content: `Task "${taskName}" not found or already completed.`,
+            };
+          }
+
+          fs.writeFileSync(planPath, updatedContent);
+          return {
+            content: `Task "${taskName}" marked as completed in track ${id}.`,
+          };
+        },
+      });
+    });
+  },
+});
